@@ -1,0 +1,470 @@
+// Variablen
+let allVocab = [];
+let currentQuizIndex = 0;
+let quizStats = { correct: 0, wrong: 0, total: 0 };
+let deferredPrompt;
+let currentImage = null;
+
+// PWA Installation
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    document.getElementById('installPrompt').classList.add('show');
+});
+
+function installApp() {
+    if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+            if (choiceResult.outcome === 'accepted') {
+                console.log('App installiert');
+            }
+            deferredPrompt = null;
+            document.getElementById('installPrompt').classList.remove('show');
+        });
+    }
+}
+
+function dismissInstall() {
+    document.getElementById('installPrompt').classList.remove('show');
+}
+
+// Tab-Wechsel
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tab).classList.add('active');
+    document.querySelector(`[onclick="switchTab('${tab}')"]`).classList.add('active');
+    
+    if (tab === 'library') {
+        showLibrary();
+    } else if (tab === 'quiz') {
+        startQuiz();
+    }
+}
+
+// Image Upload Handler
+document.addEventListener('DOMContentLoaded', () => {
+    const uploadArea = document.getElementById('uploadArea');
+    const imageInput = document.getElementById('imageInput');
+
+    // Click to upload
+    uploadArea.addEventListener('click', () => {
+        imageInput.click();
+    });
+
+    // File input change
+    imageInput.addEventListener('change', (e) => {
+        handleImageUpload(e.target.files[0]);
+    });
+
+    // Drag and drop
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+            handleImageUpload(e.dataTransfer.files[0]);
+        }
+    });
+
+    // Load vocab from localStorage
+    loadVocabFromStorage();
+});
+
+function handleImageUpload(file) {
+    if (!file || !file.type.startsWith('image/')) {
+        showStatus('Bitte ein Bild auswählen!', 'error');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        currentImage = e.target.result;
+        
+        // Show preview
+        const previewContainer = document.getElementById('imagePreviewContainer');
+        previewContainer.innerHTML = `<div class="image-preview"><img src="${currentImage}" alt="Preview"></div>`;
+        
+        // Show extract button
+        document.getElementById('extractBtn').style.display = 'block';
+        
+        showStatus('Bild geladen! Klick auf "Text erkennen"', 'success');
+    };
+    reader.readAsDataURL(file);
+}
+
+function showStatus(message, type) {
+    const statusDiv = document.getElementById('extractionStatus');
+    statusDiv.textContent = message;
+    statusDiv.className = `extraction-status ${type}`;
+}
+
+// Text extraction using Tesseract.js (OCR)
+async function extractText() {
+    if (!currentImage) {
+        showStatus('Kein Bild vorhanden!', 'error');
+        return;
+    }
+
+    showStatus('Erkenne Text... Das kann eine Weile dauern...', 'loading');
+    document.getElementById('extractBtn').disabled = true;
+
+    try {
+        // Load Tesseract from CDN
+        const { createWorker } = await import('https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js');
+        
+        const worker = await createWorker('deu'); // Deutsch
+        const { data: { text } } = await worker.recognize(currentImage);
+        await worker.terminate();
+
+        // Parse the text into vocab items
+        parseVocabulary(text);
+        showStatus('Text erfolgreich erkannt!', 'success');
+    } catch (error) {
+        console.error('OCR Error:', error);
+        showStatus('Fehler bei der Texterkennung. Versuche manuell Text einzugeben.', 'error');
+        showManualInput();
+    }
+
+    document.getElementById('extractBtn').disabled = false;
+}
+
+function parseVocabulary(text) {
+    const lines = text.split('\n').filter(line => line.trim());
+    const vocab = [];
+
+    // Simple parsing: Look for patterns like "word [phonetic] - definition" or "word - definition"
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        // Skip empty lines and lines with only numbers/brackets
+        if (!line || /^[\[\]\(\)\d]+$/.test(line)) continue;
+
+        // Try to split by common delimiters
+        let word, definition, example;
+
+        if (line.includes(' - ')) {
+            [word, definition] = line.split(' - ').map(s => s.trim());
+        } else if (line.includes(':')) {
+            [word, definition] = line.split(':').map(s => s.trim());
+        } else if (i + 1 < lines.length) {
+            word = line;
+            definition = lines[i + 1].trim();
+        } else {
+            word = line;
+            definition = '';
+        }
+
+        if (word && word.length > 1) {
+            vocab.push({
+                id: Date.now() + Math.random(),
+                word: word.toLowerCase(),
+                definition: definition || 'Definition fehlt',
+                example: example || '',
+                createdAt: new Date().toLocaleString('de-DE')
+            });
+        }
+    }
+
+    if (vocab.length > 0) {
+        displayExtractedVocab(vocab);
+    } else {
+        showManualInput();
+    }
+}
+
+function displayExtractedVocab(vocab) {
+    const container = document.getElementById('vocabExtracted');
+    
+    let html = `
+        <div style="margin-top: 20px;">
+            <h3 style="margin-bottom: 15px; color: #333;">Erkannte Vokabeln (${vocab.length})</h3>
+            <div class="vocab-list">
+    `;
+
+    vocab.forEach(item => {
+        html += `
+            <div class="vocab-item">
+                <div class="vocab-item-content">
+                    <div class="vocab-word">${item.word}</div>
+                    <div class="vocab-definition">${item.definition}</div>
+                </div>
+                <button class="vocab-delete" onclick="removeVocab(${item.id})">✕</button>
+            </div>
+        `;
+    });
+
+    html += `
+            </div>
+            <button class="btn btn-success" onclick="saveAllVocab(${JSON.stringify(vocab).replace(/"/g, '&quot;')})">
+                ✓ Alle speichern
+            </button>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+function showManualInput() {
+    const container = document.getElementById('vocabExtracted');
+    container.innerHTML = `
+        <div style="margin-top: 20px;">
+            <h3 style="margin-bottom: 15px; color: #333;">Vokabel manuell hinzufügen</h3>
+            <input type="text" id="manualWord" placeholder="Wort/Phrase" style="width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 8px;">
+            <textarea id="manualDefinition" placeholder="Definition/Erklärung" style="width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 8px; min-height: 80px; font-family: inherit;"></textarea>
+            <button class="btn btn-primary" onclick="addManualVocab()">Hinzufügen</button>
+        </div>
+    `;
+}
+
+function addManualVocab() {
+    const word = document.getElementById('manualWord').value.trim();
+    const definition = document.getElementById('manualDefinition').value.trim();
+
+    if (!word || !definition) {
+        showStatus('Bitte Wort und Definition eingeben!', 'error');
+        return;
+    }
+
+    const newVocab = {
+        id: Date.now(),
+        word: word.toLowerCase(),
+        definition: definition,
+        example: '',
+        createdAt: new Date().toLocaleString('de-DE')
+    };
+
+    allVocab.push(newVocab);
+    saveVocabToStorage();
+    showStatus('Vokabel gespeichert!', 'success');
+
+    document.getElementById('manualWord').value = '';
+    document.getElementById('manualDefinition').value = '';
+
+    // Clear current image
+    currentImage = null;
+    document.getElementById('imagePreviewContainer').innerHTML = '';
+    document.getElementById('vocabExtracted').innerHTML = '';
+    document.getElementById('extractBtn').style.display = 'none';
+}
+
+function saveAllVocab(vocab) {
+    allVocab.push(...vocab);
+    saveVocabToStorage();
+    showStatus('Alle Vokabeln gespeichert!', 'success');
+
+    // Clear
+    currentImage = null;
+    document.getElementById('imagePreviewContainer').innerHTML = '';
+    document.getElementById('vocabExtracted').innerHTML = '';
+    document.getElementById('extractBtn').style.display = 'none';
+}
+
+// LocalStorage Management
+function saveVocabToStorage() {
+    localStorage.setItem('vocabData', JSON.stringify(allVocab));
+}
+
+function loadVocabFromStorage() {
+    const data = localStorage.getItem('vocabData');
+    if (data) {
+        allVocab = JSON.parse(data);
+    }
+}
+
+function removeVocab(id) {
+    allVocab = allVocab.filter(v => v.id !== id);
+    saveVocabToStorage();
+    showLibrary();
+}
+
+// Library View
+function showLibrary() {
+    const container = document.getElementById('libraryContent');
+
+    if (allVocab.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">📭</div>
+                <p>Noch keine Vokabeln. Upload ein Bild im "Upload"-Tab!</p>
+            </div>
+        `;
+        return;
+    }
+
+    let html = `
+        <div style="margin-bottom: 20px;">
+            <h3 style="color: #333; margin-bottom: 10px;">Deine Sammlung (${allVocab.length} Vokabeln)</h3>
+            <div class="vocab-list">
+    `;
+
+    allVocab.forEach(vocab => {
+        html += `
+            <div class="vocab-item">
+                <div class="vocab-item-content">
+                    <div class="vocab-word">${vocab.word}</div>
+                    <div class="vocab-definition">${vocab.definition}</div>
+                    <div style="font-size: 11px; color: #ccc; margin-top: 5px;">${vocab.createdAt}</div>
+                </div>
+                <button class="vocab-delete" onclick="removeVocab(${vocab.id})">✕</button>
+            </div>
+        `;
+    });
+
+    html += `
+            </div>
+        </div>
+        <button class="btn btn-danger" onclick="clearAllVocab()" style="margin-top: 10px;">
+            🗑️ Alle löschen
+        </button>
+    `;
+
+    container.innerHTML = html;
+}
+
+function clearAllVocab() {
+    if (confirm('Wirklich ALLE Vokabeln löschen? Das kann nicht rückgängig gemacht werden!')) {
+        allVocab = [];
+        saveVocabToStorage();
+        showLibrary();
+    }
+}
+
+// Quiz Mode
+function startQuiz() {
+    const container = document.getElementById('quizContent');
+
+    if (allVocab.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">🎯</div>
+                <p>Noch keine Vokabeln zum Lernen. Upload zuerst ein Bild!</p>
+            </div>
+        `;
+        return;
+    }
+
+    currentQuizIndex = 0;
+    quizStats = { correct: 0, wrong: 0, total: allVocab.length };
+
+    showQuizCard();
+}
+
+function showQuizCard() {
+    const container = document.getElementById('quizContent');
+
+    if (currentQuizIndex >= allVocab.length) {
+        showQuizFinish();
+        return;
+    }
+
+    const vocab = allVocab[currentQuizIndex];
+    const isAskingWord = Math.random() > 0.5;
+
+    let html = `
+        <div class="quiz-stats">
+            <strong>Fortschritt:</strong> ${currentQuizIndex + 1} / ${allVocab.length}
+            <div class="stats-bar">
+                <div class="stat">
+                    <div class="stat-number">${quizStats.correct}</div>
+                    <div class="stat-label">Richtig</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">${quizStats.wrong}</div>
+                    <div class="stat-label">Falsch</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="quiz-card">
+            <div class="quiz-label">${isAskingWord ? 'Was ist die Definition?' : 'Welches Wort bedeutet:'}</div>
+            <div class="quiz-content">${isAskingWord ? vocab.word : vocab.definition}</div>
+            <div class="quiz-buttons">
+                <button class="btn-show" onclick="showAnswer()">
+                    👁️ Antwort zeigen
+                </button>
+            </div>
+        </div>
+
+        <div id="answerContainer" style="display: none;">
+            <div class="quiz-card" style="background: linear-gradient(135deg, #51cf66 0%, #37b24d 100%);">
+                <div class="quiz-label">Antwort:</div>
+                <div class="quiz-content">${isAskingWord ? vocab.definition : vocab.word}</div>
+            </div>
+            <div class="quiz-buttons">
+                <button class="btn-correct" onclick="markCorrect()">✓ Korrekt</button>
+                <button class="btn-wrong" onclick="markWrong()">✕ Falsch</button>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+function showAnswer() {
+    document.getElementById('answerContainer').style.display = 'block';
+}
+
+function markCorrect() {
+    quizStats.correct++;
+    nextQuestion();
+}
+
+function markWrong() {
+    quizStats.wrong++;
+    nextQuestion();
+}
+
+function nextQuestion() {
+    currentQuizIndex++;
+    showQuizCard();
+}
+
+function showQuizFinish() {
+    const container = document.getElementById('quizContent');
+    const percentage = Math.round((quizStats.correct / quizStats.total) * 100);
+
+    let html = `
+        <div style="text-align: center; padding: 40px 20px;">
+            <div style="font-size: 50px; margin-bottom: 20px;">
+                ${percentage >= 80 ? '🎉' : percentage >= 60 ? '👍' : '💪'}
+            </div>
+            <h2 style="color: #333; margin-bottom: 20px;">Quiz fertig!</h2>
+            
+            <div class="quiz-stats">
+                <div class="stats-bar">
+                    <div class="stat">
+                        <div class="stat-number">${quizStats.correct}</div>
+                        <div class="stat-label">Richtig</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">${quizStats.wrong}</div>
+                        <div class="stat-label">Falsch</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-number">${percentage}%</div>
+                        <div class="stat-label">Erfolg</div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="startQuiz()" style="margin-top: 20px;">
+                🔄 Nochmal üben
+            </button>
+            <button class="btn btn-secondary" onclick="switchTab('library')" style="margin-top: 10px;">
+                📖 Zur Sammlung
+            </button>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
