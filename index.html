@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#4A90E2">
+    <meta name="description" content="Vokabeltrainer - Bilder hochladen und lernen">
+    <title>Vokabeltrainer</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%234A90E2' width='192' height='192'/><text x='96' y='120' font-size='100' fill='white' text-anchor='middle' font-weight='bold'>📚</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%234A90E2' width='192' height='192'/><text x='96' y='120' font-size='100' fill='white' text-anchor='middle' font-weight='bold'>📚</text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px 20px;
+        }
+
+        .tab-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            color: #999;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab-btn.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f9f7ff;
+        }
+
+        .upload-area:hover {
+            background: #f0ebff;
+            border-color: #764ba2;
+        }
+
+        .upload-area.dragover {
+            background: #e6dcff;
+            border-color: #764ba2;
+        }
+
+        .upload-icon {
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        .upload-area p {
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .upload-area .small {
+            font-size: 12px;
+            color: #999;
+        }
+
+        #imageInput {
+            display: none;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn-danger {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .btn-success {
+            background: #51cf66;
+            color: white;
+        }
+
+        .image-preview {
+            margin: 20px 0;
+            border-radius: 10px;
+            overflow: hidden;
+            max-height: 300px;
+        }
+
+        .image-preview img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .extraction-status {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .extraction-status.loading {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .extraction-status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .extraction-status.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .vocab-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .vocab-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+
+        .vocab-item-content {
+            flex: 1;
+        }
+
+        .vocab-word {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .vocab-definition {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .vocab-delete {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 50px;
+            margin-bottom: 15px;
+        }
+
+        .quiz-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            border-radius: 15px;
+            text-align: center;
+            margin: 20px 0;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .quiz-label {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .quiz-content {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            word-break: break-word;
+        }
+
+        .quiz-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .quiz-buttons button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-show {
+            background: rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+
+        .btn-correct {
+            background: #51cf66;
+            color: white;
+        }
+
+        .btn-wrong {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .quiz-stats {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-size: 14px;
+        }
+
+        .stats-bar {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .stat {
+            flex: 1;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 20px;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .install-prompt {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .install-prompt.show {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .install-prompt p {
+            margin: 0;
+            font-size: 14px;
+        }
+
+        .install-prompt button {
+            background: white;
+            color: #667eea;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+
+        @media (max-width: 600px) {
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .quiz-content {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📚 Vokabeltrainer</h1>
+            <p>Lernen mit deinen eigenen Bildern</p>
+        </div>
+
+        <div class="content">
+            <div id="installPrompt" class="install-prompt">
+                <p>📱 Zur Startleiste hinzufügen</p>
+                <div>
+                    <button onclick="installApp()">Installieren</button>
+                    <button onclick="dismissInstall()" style="background: rgba(255,255,255,0.2); color: white; margin-left: 5px;">Später</button>
+                </div>
+            </div>
+
+            <div class="tab-buttons">
+                <button class="tab-btn active" onclick="switchTab('upload')">📤 Upload</button>
+                <button class="tab-btn" onclick="switchTab('library')">📖 Sammlung</button>
+                <button class="tab-btn" onclick="switchTab('quiz')">🎯 Lernen</button>
+            </div>
+
+            <!-- UPLOAD TAB -->
+            <div id="upload" class="tab-content active">
+                <div class="upload-area" onclick="document.getElementById('imageInput').click()" id="uploadArea">
+                    <div class="upload-icon">📸</div>
+                    <p><strong>Bild hier klicken zum hochladen</strong></p>
+                    <p class="small">oder per Drag & Drop</p>
+                </div>
+                <input type="file" id="imageInput" accept="image/*">
+                
+                <div id="imagePreviewContainer"></div>
+                <div id="extractionStatus"></div>
+
+                <button class="btn btn-primary" id="extractBtn" style="display: none;" onclick="extractText()">
+                    🔍 Text aus Bild erkennen
+                </button>
+
+                <div id="vocabExtracted"></div>
+            </div>
+
+            <!-- LIBRARY TAB -->
+            <div id="library" class="tab-content">
+                <div id="libraryContent"></div>
+            </div>
+
+            <!-- QUIZ TAB -->
+            <div id="quiz" class="tab-content">
+                <div id="quizContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed'));
+        }
+    </script>
+</body>
+</html>
