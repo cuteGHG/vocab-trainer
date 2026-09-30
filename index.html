@@ -90,6 +90,7 @@
         }
 
         .upload-area {
+            position: relative;
             border: 3px dashed #667eea;
             border-radius: 15px;
             padding: 40px 20px;
@@ -124,8 +125,22 @@
             color: #999;
         }
 
-        #imageInput {
-            display: none;
+        #imageInput.upload-input {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .upload-file-info {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #555;
+            min-height: 18px;
         }
 
         .btn {
@@ -435,17 +450,18 @@
 
             <!-- UPLOAD TAB -->
             <div id="upload" class="tab-content active">
-                <div class="upload-area" onclick="document.getElementById('imageInput').click()" id="uploadArea">
+                <div class="upload-area" id="uploadArea">
                     <div class="upload-icon">📸</div>
                     <p><strong>Bild hier klicken zum hochladen</strong></p>
                     <p class="small">oder per Drag & Drop</p>
+                    <input type="file" id="imageInput" class="upload-input" accept="image/*" aria-label="Bild auswählen">
                 </div>
-                <input type="file" id="imageInput" accept="image/*">
+                <div id="uploadFileInfo" class="upload-file-info" aria-live="polite"></div>
                 
                 <div id="imagePreviewContainer"></div>
-                <div id="extractionStatus"></div>
+                <div id="extractionStatus" aria-live="polite"></div>
 
-                <button class="btn btn-primary" id="extractBtn" style="display: none;" onclick="extractText()">
+                <button class="btn btn-primary" id="extractBtn" style="display: none;">
                     🔍 Text aus Bild erkennen
                 </button>
 

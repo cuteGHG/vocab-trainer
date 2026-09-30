@@ -4,6 +4,10 @@ let currentQuizIndex = 0;
 let quizStats = { correct: 0, wrong: 0, total: 0 };
 let deferredPrompt;
 let currentImage = null;
+let extractedVocabBuffer = [];
+let appInitialized = false;
+let tesseractLoadPromise = null;
+let ocrInProgress = false;
 
 // PWA Installation
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -44,18 +48,35 @@ function switchTab(tab) {
 }
 
 // Image Upload Handler
-document.addEventListener('DOMContentLoaded', () => {
+function initializeApp() {
+    if (appInitialized) return;
+    appInitialized = true;
+
     const uploadArea = document.getElementById('uploadArea');
     const imageInput = document.getElementById('imageInput');
+    const extractBtn = document.getElementById('extractBtn');
+    const uploadFileInfo = document.getElementById('uploadFileInfo');
 
-    // Click to upload
-    uploadArea.addEventListener('click', () => {
-        imageInput.click();
+    if (!uploadArea || !imageInput || !extractBtn || !uploadFileInfo) {
+        appInitialized = false;
+        return;
+    }
+
+    // Click to upload (Fallback, wichtig für Browser mit Input-Overlayschwächen)
+    uploadArea.addEventListener('click', (event) => {
+        if (event.target !== imageInput) {
+            imageInput.click();
+        }
+    });
+
+    imageInput.addEventListener('click', () => {
+        imageInput.value = '';
     });
 
     // File input change
     imageInput.addEventListener('change', (e) => {
-        handleImageUpload(e.target.files[0]);
+        const file = e.target.files && e.target.files[0];
+        handleImageUpload(file);
     });
 
     // Drag and drop
@@ -76,28 +97,76 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    extractBtn.addEventListener('click', () => {
+        extractText();
+    });
+
     // Load vocab from localStorage
     loadVocabFromStorage();
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp, { once: true });
+} else {
+    initializeApp();
+}
 
 function handleImageUpload(file) {
-    if (!file || !file.type.startsWith('image/')) {
-        showStatus('Bitte ein Bild auswählen!', 'error');
+    const uploadFileInfo = document.getElementById('uploadFileInfo');
+    const extractBtn = document.getElementById('extractBtn');
+
+    if (!file) {
+        if (uploadFileInfo) uploadFileInfo.textContent = 'Keine Datei ausgewählt.';
+        showStatus('Bitte ein Bild auswählen.', 'error');
         return;
     }
+
+    if (!file.type || !file.type.startsWith('image/')) {
+        if (uploadFileInfo) uploadFileInfo.textContent = `Ungültige Datei: ${file.name}`;
+        showStatus('Bitte ein Bild auswählen!', 'error');
+        currentImage = null;
+        document.getElementById('imagePreviewContainer').innerHTML = '';
+        extractBtn.style.display = 'none';
+        return;
+    }
+
+    if (uploadFileInfo) {
+        uploadFileInfo.textContent = `Ausgewählt: ${file.name} (${Math.round(file.size / 1024)} KB)`;
+    }
+    showStatus('Bild wird geladen…', 'loading');
 
     const reader = new FileReader();
     reader.onload = (e) => {
         currentImage = e.target.result;
-        
-        // Show preview
+
+        // Show preview (DOM-sicher ohne inline HTML-Datenübergabe)
         const previewContainer = document.getElementById('imagePreviewContainer');
-        previewContainer.innerHTML = `<div class="image-preview"><img src="${currentImage}" alt="Preview"></div>`;
-        
+        previewContainer.innerHTML = '';
+        const preview = document.createElement('div');
+        preview.className = 'image-preview';
+        const img = document.createElement('img');
+        img.src = currentImage;
+        img.alt = `Vorschau: ${file.name}`;
+        preview.appendChild(img);
+        previewContainer.appendChild(preview);
+
+        document.getElementById('vocabExtracted').innerHTML = '';
+        extractedVocabBuffer = [];
+
         // Show extract button
-        document.getElementById('extractBtn').style.display = 'block';
-        
-        showStatus('Bild geladen! Klick auf "Text erkennen"', 'success');
+        extractBtn.style.display = 'block';
+        extractBtn.disabled = false;
+        extractBtn.textContent = '🔍 Text aus Bild erkennen';
+
+        showStatus('Bild geladen. Texterkennung startet jetzt…', 'success');
+        setTimeout(() => {
+            extractText({ auto: true });
+        }, 50);
+    };
+    reader.onerror = () => {
+        currentImage = null;
+        showStatus('Datei konnte nicht gelesen werden. Bitte erneut versuchen.', 'error');
+        extractBtn.style.display = 'none';
     };
     reader.readAsDataURL(file);
 }
@@ -109,33 +178,106 @@ function showStatus(message, type) {
 }
 
 // Text extraction using Tesseract.js (OCR)
-async function extractText() {
+async function extractText({ auto = false } = {}) {
     if (!currentImage) {
         showStatus('Kein Bild vorhanden!', 'error');
         return;
     }
 
-    showStatus('Erkenne Text... Das kann eine Weile dauern...', 'loading');
-    document.getElementById('extractBtn').disabled = true;
+    if (ocrInProgress) {
+        if (!auto) {
+            showStatus('Texterkennung läuft bereits…', 'loading');
+        }
+        return;
+    }
+
+    const extractBtn = document.getElementById('extractBtn');
+    ocrInProgress = true;
+    showStatus('Erkenne Text... Das kann auf iPad etwas dauern...', 'loading');
+    extractBtn.disabled = true;
+    extractBtn.textContent = '⏳ Texterkennung läuft...';
 
     try {
-        // Load Tesseract from CDN
-        const { createWorker } = await import('https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js');
-        
-        const worker = await createWorker('deu'); // Deutsch
-        const { data: { text } } = await worker.recognize(currentImage);
-        await worker.terminate();
+        const text = await runOcr(currentImage);
 
         // Parse the text into vocab items
         parseVocabulary(text);
         showStatus('Text erfolgreich erkannt!', 'success');
     } catch (error) {
         console.error('OCR Error:', error);
-        showStatus('Fehler bei der Texterkennung. Versuche manuell Text einzugeben.', 'error');
+        const offlineHint = !navigator.onLine
+            ? ' Keine Internetverbindung: OCR-Bibliothek konnte nicht geladen werden.'
+            : '';
+        showStatus(`Fehler bei der Texterkennung.${offlineHint} Du kannst unten manuell Vokabeln eingeben.`, 'error');
         showManualInput();
+    } finally {
+        ocrInProgress = false;
+        extractBtn.disabled = false;
+        extractBtn.textContent = '🔍 Text aus Bild erkennen';
+    }
+}
+
+async function runOcr(imageData) {
+    const tesseract = await ensureTesseractLoaded();
+    let lastError = null;
+
+    for (const lang of ['deu+eng', 'eng']) {
+        try {
+            const result = await tesseract.recognize(imageData, lang);
+            const text = result && result.data ? result.data.text : '';
+            if (text && text.trim()) {
+                return text;
+            }
+            return text || '';
+        } catch (error) {
+            lastError = error;
+        }
     }
 
-    document.getElementById('extractBtn').disabled = false;
+    throw lastError || new Error('OCR konnte nicht ausgeführt werden.');
+}
+
+async function ensureTesseractLoaded() {
+    if (window.Tesseract && typeof window.Tesseract.recognize === 'function') {
+        return window.Tesseract;
+    }
+
+    if (!tesseractLoadPromise) {
+        tesseractLoadPromise = new Promise((resolve, reject) => {
+            const existingScript = document.querySelector('script[data-tesseract-cdn="true"]');
+            if (existingScript) {
+                existingScript.addEventListener('load', () => {
+                    if (window.Tesseract) {
+                        resolve(window.Tesseract);
+                    } else {
+                        reject(new Error('Tesseract CDN geladen, aber API nicht verfügbar.'));
+                    }
+                }, { once: true });
+                existingScript.addEventListener('error', () => reject(new Error('Tesseract Script konnte nicht geladen werden.')), { once: true });
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+            script.async = true;
+            script.defer = true;
+            script.setAttribute('data-tesseract-cdn', 'true');
+            script.onload = () => {
+                if (window.Tesseract && typeof window.Tesseract.recognize === 'function') {
+                    resolve(window.Tesseract);
+                } else {
+                    reject(new Error('Tesseract API nicht gefunden.'));
+                }
+            };
+            script.onerror = () => reject(new Error('Tesseract CDN nicht erreichbar.'));
+            document.head.appendChild(script);
+        }).catch((error) => {
+            tesseractLoadPromise = null;
+            throw error;
+        });
+    }
+
+    return tesseractLoadPromise;
 }
 
 function parseVocabulary(text) {
@@ -183,35 +325,56 @@ function parseVocabulary(text) {
 }
 
 function displayExtractedVocab(vocab) {
+    extractedVocabBuffer = Array.isArray(vocab) ? vocab.slice() : [];
     const container = document.getElementById('vocabExtracted');
+
+    if (extractedVocabBuffer.length === 0) {
+        showManualInput();
+        return;
+    }
     
     let html = `
         <div style="margin-top: 20px;">
-            <h3 style="margin-bottom: 15px; color: #333;">Erkannte Vokabeln (${vocab.length})</h3>
+            <h3 style="margin-bottom: 15px; color: #333;">Erkannte Vokabeln (${extractedVocabBuffer.length})</h3>
             <div class="vocab-list">
     `;
 
-    vocab.forEach(item => {
+    extractedVocabBuffer.forEach((item, index) => {
         html += `
             <div class="vocab-item">
                 <div class="vocab-item-content">
                     <div class="vocab-word">${item.word}</div>
                     <div class="vocab-definition">${item.definition}</div>
                 </div>
-                <button class="vocab-delete" onclick="removeVocab(${item.id})">✕</button>
+                <button class="vocab-delete" data-extracted-index="${index}" type="button">✕</button>
             </div>
         `;
     });
 
     html += `
             </div>
-            <button class="btn btn-success" onclick="saveAllVocab(${JSON.stringify(vocab).replace(/"/g, '&quot;')})">
+            <button class="btn btn-success" id="saveExtractedBtn" type="button">
                 ✓ Alle speichern
             </button>
         </div>
     `;
 
     container.innerHTML = html;
+
+    container.querySelectorAll('[data-extracted-index]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const index = Number(button.getAttribute('data-extracted-index'));
+            if (Number.isInteger(index) && index >= 0 && index < extractedVocabBuffer.length) {
+                extractedVocabBuffer.splice(index, 1);
+                displayExtractedVocab(extractedVocabBuffer);
+            }
+        });
+    });
+
+    const saveExtractedBtn = document.getElementById('saveExtractedBtn');
+    if (saveExtractedBtn) {
+        saveExtractedBtn.addEventListener('click', () => saveAllVocab());
+    }
 }
 
 function showManualInput() {
@@ -252,20 +415,29 @@ function addManualVocab() {
 
     // Clear current image
     currentImage = null;
+    extractedVocabBuffer = [];
     document.getElementById('imagePreviewContainer').innerHTML = '';
     document.getElementById('vocabExtracted').innerHTML = '';
+    document.getElementById('uploadFileInfo').textContent = '';
     document.getElementById('extractBtn').style.display = 'none';
 }
 
-function saveAllVocab(vocab) {
+function saveAllVocab(vocab = extractedVocabBuffer) {
+    if (!Array.isArray(vocab) || vocab.length === 0) {
+        showStatus('Keine Vokabeln zum Speichern vorhanden.', 'error');
+        return;
+    }
+
     allVocab.push(...vocab);
     saveVocabToStorage();
     showStatus('Alle Vokabeln gespeichert!', 'success');
 
     // Clear
     currentImage = null;
+    extractedVocabBuffer = [];
     document.getElementById('imagePreviewContainer').innerHTML = '';
     document.getElementById('vocabExtracted').innerHTML = '';
+    document.getElementById('uploadFileInfo').textContent = '';
     document.getElementById('extractBtn').style.display = 'none';
 }
 
